@@ -1,0 +1,24 @@
+[package]
+name = "zforge-native"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+zforge-core = { path = "../zforge-core" }
+zforge-decoder = { path = "../zforge-decoder" }
+
+[target.'cfg(target_arch = "x86_64")'.dependencies]
+cranelift-codegen = "0.137.1"
+cranelift-frontend = "0.137.1"
+cranelift-jit = "0.137.1"
+cranelift-module = "0.137.1"
+cranelift-native = "0.137.1"
+
+[dev-dependencies]
+zforge-interpreter = { path = "../zforge-interpreter" }
+
+# Allow only the documented executable-memory call and teardown.
+[lints.rust]
+unsafe_code = "deny"

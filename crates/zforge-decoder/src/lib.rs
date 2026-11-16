@@ -92,11 +92,17 @@ impl std::error::Error for DecodeError {}
 
 /// Fetch one instruction, wrapping at the end of the Z80 address space.
 pub fn decode(memory: &mut impl Memory, pc: u16) -> Result<Decoded, DecodeError> {
+    decode_with(pc, |address| memory.read(address))
+}
+
+/// Decode using a caller-supplied byte source, such as a read-only view of RAM.
+/// Requests bytes in instruction order and wraps addresses at 16 bits.
+pub fn decode_with(pc: u16, mut read: impl FnMut(u16) -> u8) -> Result<Decoded, DecodeError> {
     use Instruction::*;
 
     let mut next_pc = pc;
     let mut byte = || {
-        let value = memory.read(next_pc);
+        let value = read(next_pc);
         next_pc = next_pc.wrapping_add(1);
         value
     };
@@ -164,6 +170,28 @@ mod tests {
                 pc: 0x100,
                 opcode: 0xdd
             })
+        );
+    }
+
+    #[test]
+    fn read_only_decode_fetches_just_the_instruction_bytes() {
+        let mut memory = FlatMemory::default();
+        memory.load(0xffff, &[0x18]).unwrap();
+        memory.write(0, 0xfe);
+        let mut addresses = Vec::new();
+        let decoded = decode_with(0xffff, |address| {
+            addresses.push(address);
+            memory.peek(address)
+        })
+        .unwrap();
+
+        assert_eq!(addresses, [0xffff, 0]);
+        assert_eq!(
+            decoded,
+            Decoded {
+                instruction: Instruction::JumpRelative(Condition::Always, -2),
+                next_pc: 1,
+            }
         );
     }
 }

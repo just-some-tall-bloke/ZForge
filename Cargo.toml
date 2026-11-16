@@ -1,5 +1,11 @@
 [workspace]
-members = ["crates/zforge-core", "crates/zforge-decoder", "crates/zforge-interpreter"]
+members = [
+    "crates/zforge-core",
+    "crates/zforge-cpm",
+    "crates/zforge-decoder",
+    "crates/zforge-interpreter",
+    "crates/zforge-native",
+]
 resolver = "3"
 
 [workspace.package]
