@@ -21,7 +21,7 @@ The example ends with `RAM[0x8000] = 0, total T-states = 67`.
 On x86-64, Cranelift compiles a small instruction subset into native blocks. Tests compare the native countdown against the interpreter after each block. A second demo loads an original CP/M `.COM` image at `0x0100`, prints through a host BDOS handler, and exits.
 
 ```sh
-cargo run -p zforge-native --example countdown
+cargo run -p zforge-native --example native_countdown
 cargo run -p zforge-cpm --example print-and-exit
 ```
 
