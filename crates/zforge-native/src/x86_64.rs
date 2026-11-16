@@ -1,8 +1,8 @@
 use std::mem::{offset_of, transmute};
 
 use cranelift_codegen::{
-    ir::{AbiParam, InstBuilder, MemFlags, Type, Value, condcodes::IntCC, types},
-    isa::OwnedTargetIsa,
+    ir::{AbiParam, InstBuilder, MemFlagsData, Type, Value, condcodes::IntCC, types},
+    isa::{OwnedTargetIsa, TargetFrontendConfig},
     settings::{self, Configurable},
 };
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
@@ -56,12 +56,12 @@ impl NativeEngine {
         ))));
         let module = allocation.0.as_mut().expect("module is owned until drop");
         let mut context = module.make_context();
-        let pointer_type = module.target_config().pointer_type();
+        let target_config = module.target_config();
         context
             .func
             .signature
             .params
-            .push(AbiParam::new(pointer_type));
+            .push(AbiParam::new(target_config.pointer_type()));
         let mut builder_context = FunctionBuilderContext::new();
         let mut builder = FunctionBuilder::new(&mut context.func, &mut builder_context);
         let entry = builder.create_block();
@@ -102,7 +102,7 @@ impl NativeEngine {
                 }
             }
         }
-        emitter.finish(instructions);
+        emitter.finish(instructions, target_config);
         let id = module
             .declare_anonymous_function(&context.func.signature)
             .map_err(codegen)?;
@@ -302,19 +302,19 @@ impl Emitter<'_> {
 
     fn decrement(&mut self, offset: usize) {
         let previous = self.load(types::I8, offset);
-        let result = self.builder.ins().iadd_imm(previous, -1);
+        let result = self.builder.ins().iadd_imm_s(previous, -1);
         let previous_flags = self.load(types::I8, offset_of!(Frame, f));
         let carry = self
             .builder
             .ins()
-            .band_imm(previous_flags, i64::from(flags::C));
+            .band_imm_u(previous_flags, i64::from(flags::C));
         let result_bits = i64::from(flags::S | flags::Y | flags::X);
-        let sign_xy = self.builder.ins().band_imm(result, result_bits);
+        let sign_xy = self.builder.ins().band_imm_u(result, result_bits);
         let zero = self.flag_if_equal(result, 0, flags::Z);
-        let low_nibble = self.builder.ins().band_imm(previous, 0x0f);
+        let low_nibble = self.builder.ins().band_imm_u(previous, 0x0f);
         let half_borrow = self.flag_if_equal(low_nibble, 0, flags::H);
         let overflow = self.flag_if_equal(previous, 0x80, flags::PV);
-        let mut flags = self.builder.ins().bor_imm(carry, i64::from(flags::N));
+        let mut flags = self.builder.ins().bor_imm_u(carry, i64::from(flags::N));
         for bit in [sign_xy, zero, half_borrow, overflow] {
             flags = self.builder.ins().bor(flags, bit);
         }
@@ -323,7 +323,7 @@ impl Emitter<'_> {
     }
 
     fn flag_if_equal(&mut self, value: Value, expected: i64, flag: u8) -> Value {
-        let equal = self.builder.ins().icmp_imm(IntCC::Equal, value, expected);
+        let equal = self.builder.ins().icmp_imm_u(IntCC::Equal, value, expected);
         let flag = self.constant(types::I8, flag);
         let zero = self.constant(types::I8, 0_u8);
         self.builder.ins().select(equal, flag, zero)
@@ -338,14 +338,14 @@ impl Emitter<'_> {
             Condition::Always => unreachable!("unconditional jump handled separately"),
         };
         let flags = self.load(types::I8, offset_of!(Frame, f));
-        let masked = self.builder.ins().band_imm(flags, i64::from(flag));
-        self.builder.ins().icmp_imm(test, masked, 0)
+        let masked = self.builder.ins().band_imm_u(flags, i64::from(flag));
+        self.builder.ins().icmp_imm_u(test, masked, 0)
     }
 
     fn push_return_address(&mut self, address: u16) {
         let sp = self.load(types::I16, offset_of!(Frame, sp));
-        let high_address = self.builder.ins().iadd_imm(sp, -1);
-        let low_address = self.builder.ins().iadd_imm(sp, -2);
+        let high_address = self.builder.ins().iadd_imm_s(sp, -1);
+        let low_address = self.builder.ins().iadd_imm_s(sp, -2);
         let [high, low] = address.to_be_bytes();
         let high = self.constant(types::I8, high);
         let low = self.constant(types::I8, low);
@@ -360,18 +360,18 @@ impl Emitter<'_> {
         self.store(value, base + offset_of!(PendingWrite, value));
     }
 
-    fn finish(mut self, instruction_count: u32) {
+    fn finish(mut self, instruction_count: u32, target_config: TargetFrontendConfig) {
         let previous_r = self.load(types::I8, offset_of!(Frame, r));
-        let bit_seven = self.builder.ins().band_imm(previous_r, 0x80);
+        let bit_seven = self.builder.ins().band_imm_u(previous_r, 0x80);
         let advanced = self
             .builder
             .ins()
-            .iadd_imm(previous_r, i64::from(instruction_count));
-        let low_seven = self.builder.ins().band_imm(advanced, 0x7f);
+            .iadd_imm_u(previous_r, i64::from(instruction_count));
+        let low_seven = self.builder.ins().band_imm_u(advanced, 0x7f);
         let r = self.builder.ins().bor(bit_seven, low_seven);
         self.store(r, offset_of!(Frame, r));
         self.builder.ins().return_(&[]);
-        self.builder.finalize();
+        self.builder.finalize(target_config);
     }
 
     fn add_cycles(&mut self, cycles: Value) {
@@ -383,13 +383,16 @@ impl Emitter<'_> {
     fn load(&mut self, ty: Type, offset: usize) -> Value {
         self.builder
             .ins()
-            .load(ty, MemFlags::new(), self.frame_pointer, offset as i32)
+            .load(ty, MemFlagsData::new(), self.frame_pointer, offset as i32)
     }
 
     fn store(&mut self, value: Value, offset: usize) {
-        self.builder
-            .ins()
-            .store(MemFlags::new(), value, self.frame_pointer, offset as i32);
+        self.builder.ins().store(
+            MemFlagsData::new(),
+            value,
+            self.frame_pointer,
+            offset as i32,
+        );
     }
 
     fn constant(&mut self, ty: Type, value: impl Into<i64>) -> Value {
