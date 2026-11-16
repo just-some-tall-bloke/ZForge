@@ -98,6 +98,11 @@ impl std::fmt::Display for LoadError {
 impl std::error::Error for LoadError {}
 
 impl FlatMemory {
+    /// Inspect a RAM byte without performing an emulated memory access.
+    pub fn peek(&self, address: u16) -> u8 {
+        self.bytes[usize::from(address)]
+    }
+
     /// Load a contiguous image. An image that crosses the end of RAM is
     /// rejected before any bytes are written.
     pub fn load(&mut self, address: u16, image: &[u8]) -> Result<(), LoadError> {
@@ -115,7 +120,7 @@ impl FlatMemory {
 
 impl Memory for FlatMemory {
     fn read(&mut self, address: u16) -> u8 {
-        self.bytes[usize::from(address)]
+        self.peek(address)
     }
 
     fn write(&mut self, address: u16, value: u8) {
