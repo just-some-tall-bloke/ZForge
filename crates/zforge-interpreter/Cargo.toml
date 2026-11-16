@@ -1,0 +1,13 @@
+[package]
+name = "zforge-interpreter"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+zforge-core = { path = "../zforge-core" }
+zforge-decoder = { path = "../zforge-decoder" }
+
+[lints]
+workspace = true
